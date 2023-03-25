@@ -10,4 +10,4 @@ Neural Network for Homomorphic Encryption
 
 4.git commit -m "修改的内容"
 
-5. git push
+5.使用git push命令将代码提交到master仓库
