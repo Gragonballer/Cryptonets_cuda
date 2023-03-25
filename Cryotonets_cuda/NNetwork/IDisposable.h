@@ -1,0 +1,4 @@
+class IDisposable
+{
+	void Dispose();
+}
