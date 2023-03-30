@@ -1,4 +1,5 @@
 class IDisposable
 {
-	void Dispose();
-}
+public:
+	virtual void Dispose() ;
+};
