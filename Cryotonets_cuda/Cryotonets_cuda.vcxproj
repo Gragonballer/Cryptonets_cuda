@@ -49,7 +49,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp14</LanguageStandard>
+      <LanguageStandard>Default</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -84,6 +84,10 @@
     <CudaCompile Include="kernel.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="NNetwork\EncryptedSealBfvFactory.h" />
+    <ClInclude Include="NNetwork\IMatrix.h" />
+    <ClInclude Include="NNetwork\BaseLayer.h" />
+    <ClInclude Include="NNetwork\EncryptLayer.h" />
     <ClInclude Include="NNetwork\IEnumerable.h" />
     <ClInclude Include="NNetwork\BigInteger.h" />
     <ClInclude Include="NNetwork\IComputationEnvironment.h" />
@@ -91,7 +95,13 @@
     <ClInclude Include="NNetwork\IVector.h" />
     <ClInclude Include="NNetwork\IDisposable.h" />
     <ClInclude Include="NNetwork\INetwork.h" />
+    <ClInclude Include="NNetwork\OperationsCount.h" />
     <ClInclude Include="NNetwork\Utils.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="BaseLayer.cpp" />
+    <ClCompile Include="EncryptLayer.cpp" />
+    <ClCompile Include="IMatrix.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -1,33 +1,92 @@
 #pragma once
-#include<seal/batchencoder.h>
+#include<seal/seal.h>
+#include<string>
+#include "seal/context.h"
+#include"IComputationEnvironment.h"
+#include <algorithm>
+#include <iterator>
+#include <functional>
+#include<fstream>
+#include <sstream>
+#include"ConcurrentQueue.h"
+template <typename InputIt, typename Size, typename UnaryFunction>
+InputIt for_each_n(InputIt first, Size n, UnaryFunction f)
+{
+    return std::for_each(first, std::next(first, n), f);
+}
+
+typedef unsigned long long ulong;
+using namespace std;
+using namespace seal;
+
+/*
+Helper function: Convert a value into a hexadecimal string, e.g., uint64_t(17) --> "11".
+*/
+inline std::string uint64_to_hex_string(std::uint64_t value)
+{
+    return seal::util::uint_to_hex_string(&value, std::size_t(1));
+}
+
 
 class AtomicSealBfvEncryptedEnvironment : IComputationEnvironment
 {
+public:
+    shared_ptr<Evaluator> evaluator;
+    EncryptionParameters parameters;
+    shared_ptr<KeyGenerator> keygen;
+    PublicKey publicKey;
+    SEALContext* context;
+    SecretKey secretKey;
+    std::shared_ptr<seal::Encryptor> encryptor;
+    std::shared_ptr<seal::Decryptor> decryptor;
+    std::shared_ptr<seal::BatchEncoder> builder;
+    RelinKeys relinKeys;
+    GaloisKeys galoisKeys;
+    Plaintext plainZero;
+    /*SecretKey secretKey;
+    PublicKey publicKey;
+    RelinKeys relinKeys;
+    BatchEncoder builder;
+    GaloisKeys galoisKeys;
+    Plaintext PlainZero;*/
 
-    public Evaluator evaluator;
-    public Encryptor encryptor;
-    public Decryptor decryptor;
-    public EncryptionParameters parameters = null;
-    public SEALContext context = null;
-    public readonly MemoryPoolHandle memoryPool = MemoryPoolHandle.New();
-    public SecretKey secretKey;
-    public PublicKey publicKey;
-    public RelinKeys relinKeys;
-    public BatchEncoder builder;
-    public GaloisKeys galoisKeys;
-    public Plaintext PlainZero;
-    public ulong plainmodulusValue = 0;
-    public int PlaintextCapacity{ get { return (int)parameters.PolyModulusDegree; } }
-    public ulong CiphertextCapacity{ get { return 3; } }
+    vector<ulong> plainmodulusValue;
+    //原来的readonly的作用是这个引用类型的实例成员只能在构造函数中初始化，初始化后就不能再修改其指向的对象。【C++用const实现类似功能】
+    const MemoryPoolHandle memoryPool = MemoryPoolHandle::New();
+    //int PlaintextCapacity{ get { return (int)parameters.PolyModulusDegree; } }
+    //这个是随意初始化的
+    int plaintextCapacity = 0;
+    int getPlaintextCapacity(){ return plaintextCapacity; }
+    ulong ciphertextCapacity = 3;
+    ulong getCiphertextCapacity() { return ciphertextCapacity; }
+    //ulong CiphertextCapacity{ get { return 3; } }
 
-    public IFactory ParentFactory{ get; set; }
+    //public IFactory ParentFactory{ get; set; }
+    IFactory* parentFactory = NULL;
+    IFactory* getParentFactory() { return parentFactory; }
+    void setParentFactory(IFactory* param) { parentFactory = param; }
 
-
-        public AtomicSealBfvEncryptedEnvironment()
+    AtomicSealBfvEncryptedEnvironment():parameters(scheme_type::bfv), plainZero(uint64_to_hex_string(uint64_t(6)),memoryPool)
     {
+        // 初始化 SEAL 库
+        size_t poly_modulus_degree = 8192;
+        parameters.set_poly_modulus_degree(poly_modulus_degree);
+        parameters.set_coeff_modulus(CoeffModulus::BFVDefault(poly_modulus_degree));
+        parameters.set_plain_modulus(PlainModulus::Batching(poly_modulus_degree, 20));
+        context =new  SEALContext(parameters);
+        keygen = make_shared<KeyGenerator>(context);
+        keygen->create_public_key(publicKey);
+        secretKey = keygen->secret_key();
+        encryptor = make_shared<Encryptor>(context, publicKey);
+        decryptor = make_shared<Decryptor>(context, secretKey);
+        builder = make_shared<BatchEncoder>(context);
+        evaluator = make_shared<Evaluator>(context);
+        keygen->create_relin_keys(relinKeys);
+        keygen->create_galois_keys(galoisKeys);
     }
+   
 
-    public AtomicSealBfvEncryptedEnvironment(AtomicSealBfvEncryptedEnvironment p)
+    AtomicSealBfvEncryptedEnvironment(AtomicSealBfvEncryptedEnvironment& p)
     {
         parameters = p.parameters;
         context = p.context;
@@ -39,55 +98,138 @@ class AtomicSealBfvEncryptedEnvironment : IComputationEnvironment
         encryptor = p.encryptor;
         decryptor = p.decryptor;
         galoisKeys = p.galoisKeys;
-        PlainZero = p.PlainZero;
-        ParentFactory = p.ParentFactory;
+        plainZero = p.plainZero;
+        parentFactory = p.parentFactory;
         plainmodulusValue = p.plainmodulusValue;
     }
 
-    public void SetKeys(KeyGenerator keys, int DecompositionBitCount, int GaloisDecompositionBitCount)
+    void SetKeys(KeyGenerator* keys, int DecompositionBitCount, vector<int> GaloisDecompositionBitCount)
     {
-        evaluator = new Evaluator(context);
-        encryptor = new Encryptor(context, keys.PublicKey);
-        decryptor = new Decryptor(context, keys.SecretKey);
-        builder = new BatchEncoder(context);
-        relinKeys = keys.RelinKeys(DecompositionBitCount);
-        galoisKeys = keys.GaloisKeys(GaloisDecompositionBitCount);
-        secretKey = new SecretKey(keys.SecretKey);
-        publicKey = new PublicKey(keys.PublicKey);
-        PlainZero = new Plaintext("0", memoryPool);
-        plainmodulusValue = parameters.PlainModulus.Value;
+        evaluator = make_shared<Evaluator>(context);
+        encryptor = make_shared<Encryptor>(context, publicKey);
+        decryptor = make_shared<Decryptor>(context, secretKey);
+        builder = make_shared<BatchEncoder>(context);
+        //relinKeys = keys.relin_keys(DecompositionBitCount);
+        keys->create_relin_keys(relinKeys);
+        keys->create_galois_keys(GaloisDecompositionBitCount, galoisKeys);
+        //galoisKeys = keys->GaloisKeys(GaloisDecompositionBitCount);
+        secretKey = keys->secret_key();
+        keys->create_public_key(publicKey);
+        //plainZero = new Plaintext("0", memoryPool);  //移到构造函数中去
+
+        plainmodulusValue = parameters.plain_modulus().value();
     }
 
-    public AtomicSealBfvEncryptedEnvironment GetPublicKeys()
+    AtomicSealBfvEncryptedEnvironment GetPublicKeys()
     {
-        var publicKeys = new AtomicSealBfvEncryptedEnvironment(this)
-        {
-            secretKey = null,
-            decryptor = null
-        };
+        AtomicSealBfvEncryptedEnvironment publicKeys(*this);
+        /*没有设置secretKey为空值*/
+        publicKeys.decryptor.reset();
         return publicKeys;
     }
 
-    public void SaveToFile(string fileName)
+    void SaveToFile(string fileName)
     {
         // Open file for output.
-        Console.WriteLine("Opening file {0} for writing", fileName);
-        using (var file = File.Create(fileName)) SaveToStream(file);
+        cout<<"Opening file "<< fileName<<" for writing";
+        //using (var file = File.Create(fileName)) SaveToStream(file);
+        // 打开文件并写入序列化后的对象
+        save_parameters(parameters, "params.dat");
+        save_public_key(publicKey, "publickey.dat");
+        save_relin_keys(relinKeys, "relinkeys.dat");
+        save_galois_keys(galoisKeys, "galoiskeys.dat");
+        save_encryption_data(parameters, publicKey, relinKeys, galoisKeys, secretKey, "keys.dat", true);
     }
-
-    public void SaveToStream(Stream stream, bool withPrivateKeys = true)
+    void save_parameters(const EncryptionParameters& params, const string& filename)
     {
-        EncryptionParameters.Save(parameters, stream);
-        publicKey.Save(stream);
-        relinKeys.Save(stream);
-        galoisKeys.Save(stream);
-        if (withPrivateKeys)
-            secretKey.Save(stream);
-        else
-            new SecretKey().Save(stream);
+        ofstream outfile(filename, ios::binary);
+        params.save(outfile);
+        outfile.close();
     }
 
-    public void LoadFromStream(Stream stream)
+    void save_public_key(const PublicKey& public_key, const string& filename)
+    {
+        ofstream outfile(filename, ios::binary);
+        public_key.save(outfile);
+        outfile.close();
+    }
+
+    void save_relin_keys(const RelinKeys& relin_keys, const string& filename)
+    {
+        ofstream outfile(filename, ios::binary);
+        relin_keys.save(outfile);
+        outfile.close();
+    }
+
+    void save_galois_keys(const GaloisKeys& galois_keys, const string& filename)
+    {
+        ofstream outfile(filename, ios::binary);
+        galois_keys.save(outfile);
+        outfile.close();
+    }
+
+    void save_secret_key(const SecretKey& secret_key, const string& filename)
+    {
+        ofstream outfile(filename, ios::binary);
+        secret_key.save(outfile);
+        outfile.close();
+    }
+
+    void save_encryption_data(const EncryptionParameters& params, const PublicKey& public_key,
+        const RelinKeys& relin_keys, const GaloisKeys& galois_keys, const SecretKey& secret_key,
+        const string& filename, bool with_private_keys = true)
+    {
+        ofstream outfile(filename, ios::binary);
+        params.save(outfile);
+        public_key.save(outfile);
+        relin_keys.save(outfile);
+        galois_keys.save(outfile);
+        if (with_private_keys)
+            secret_key.save(outfile);
+        else
+            SecretKey().save(outfile); // save an empty secret key
+        outfile.close();
+    }
+    //void SaveToStream(Stream stream, bool withPrivateKeys = true)
+    //{
+    //    EncryptionParameters.Save(parameters, stream);
+    //    publicKey.Save(stream);
+    //    relinKeys.Save(stream);
+    //    galoisKeys.Save(stream);
+    //    if (withPrivateKeys)
+    //        secretKey.Save(stream);
+    //    else
+    //        new SecretKey().Save(stream);
+    //}
+    void LoadFromStream(std::istream& stream)
+    {
+        parameters.load(stream);
+        context = new SEALContext(parameters);
+        publicKey = PublicKey();
+        publicKey.load(*context, stream);
+        relinKeys = RelinKeys();
+        relinKeys.load(*context, stream);
+        galoisKeys = GaloisKeys();
+        galoisKeys.load(*context, stream);
+        secretKey = SecretKey();
+        secretKey.load(*context, stream);
+        plainmodulusValue = parameters.plain_modulus().value();
+
+        evaluator = make_shared<Evaluator>(context);
+        encryptor = make_shared<Encryptor>(context, publicKey);
+        try
+        {
+            decryptor = make_shared<Decryptor>(context, secretKey);
+        }
+        catch (const std::exception&)
+        {
+            decryptor = nullptr;
+            std::cout << "WARNING: no Secret Key in file. Will not be able to decrypt messages." << std::endl;
+        }
+        builder = make_shared<BatchEncoder>(context);
+    }
+
+   /* public void LoadFromStream(Stream stream)
     {
         parameters = EncryptionParameters.Load(stream);
         context = SEALContext.Create(parameters);
@@ -113,170 +255,87 @@ class AtomicSealBfvEncryptedEnvironment : IComputationEnvironment
             Console.WriteLine("WARNING: no Secret Key in file. Will not be able to decrypt messages.");
         }
         builder = new BatchEncoder(context);
-    }
+    }*/
 
-    public void LoadFromFile(String fileName)
+    //public void LoadFromFile(String fileName)
+    //{
+    //    using (var file = File.OpenRead(fileName))
+    //    {
+    //        LoadFromStream(file);
+    //    }
+    //}
+
+    //public static EncryptionParameters Parms(ulong t, ulong n, int SmallModulusCount)
+    //{
+    //    var parms = new EncryptionParameters(SchemeType.BFV)
+    //    {
+    //        PlainModulus = new SmallModulus(t),
+    //        PolyModulusDegree = n,
+    //        CoeffModulus = DefaultParams.CoeffModulus128(n)
+    //    };
+    //    if (SmallModulusCount > 0)
+    //        parms.CoeffModulus = parms.CoeffModulus.Take(SmallModulusCount).ToList();
+    //    return parms;
+    //}
+    EncryptionParameters Parms(ulong t, ulong n, int SmallModulusCount)
     {
-        using (var file = File.OpenRead(fileName))
-        {
-            LoadFromStream(file);
+        EncryptionParameters parms(scheme_type::bfv);
+        auto poly_modulus_degree = n;
+        auto plain_modulus = seal::PlainModulus::Batching(poly_modulus_degree,t);
+        /*第二个参数是自己随便设置的*/
+        auto coeff_modulus = seal::CoeffModulus::Create(poly_modulus_degree, { 60, 40, 40, 60 });
+        parms.set_plain_modulus(t);
+        parms.set_poly_modulus_degree(n);
+        parms.set_coeff_modulus(coeff_modulus);
+        if (SmallModulusCount > 0) {
+            parms.set_coeff_modulus(CoeffModulus::Create(
+                static_cast<std::size_t>(n), { 60, 40, 40, 60 }));
         }
-    }
-
-    public static EncryptionParameters Parms(ulong t, ulong n, int SmallModulusCount)
-    {
-        var parms = new EncryptionParameters(SchemeType.BFV)
-        {
-            PlainModulus = new SmallModulus(t),
-            PolyModulusDegree = n,
-            CoeffModulus = DefaultParams.CoeffModulus128(n)
-        };
-        if (SmallModulusCount > 0)
-            parms.CoeffModulus = parms.CoeffModulus.Take(SmallModulusCount).ToList();
         return parms;
     }
-    public static EncryptionParameters Parms(ulong t, ulong n, List<SmallModulus> coefModulus = null)
+    /*没引用，没实现*/
+    static EncryptionParameters Parms(ulong t, ulong n)
     {
-        var parms = new EncryptionParameters(SchemeType.BFV)
-        {
-            PlainModulus = new SmallModulus(t),
-            PolyModulusDegree = n,
-            CoeffModulus = coefModulus
-        };
-        return parms;
+
     }
 
-    public void GenerateEncryptionKeys(ulong prime, ulong n, int DecompositionBitCount, int GaloisDecompositionBitCount, int SmallModulusCount)
+    void GenerateEncryptionKeys(ulong prime, ulong n, int DecompositionBitCount, vector<int> GaloisDecompositionBitCount, int SmallModulusCount)
     {
         GenerateEncryptionKeys(Parms(prime, n, SmallModulusCount), DecompositionBitCount, GaloisDecompositionBitCount);
     }
-    public void GenerateEncryptionKeys(EncryptionParameters parms, int DecompositionBitCount, int GaloisDecompositionBitCount)
+    /*第三个参数类型改成了vector<int>,因为原来的类没实现以int形式传入的方法*/
+    void GenerateEncryptionKeys(EncryptionParameters parms, int DecompositionBitCount, vector<int> GaloisDecompositionBitCount)
     {
-        this.parameters = parms;
-        context = SEALContext.Create(parameters);
-        var keyGenerator = new KeyGenerator(context);
-        SetKeys(keyGenerator, DecompositionBitCount, GaloisDecompositionBitCount);
+        parameters = parms;
+        context = new SEALContext(parameters);
+        KeyGenerator keyGenerator(*context);
+        SetKeys(&keyGenerator, DecompositionBitCount, GaloisDecompositionBitCount);
+    }
+    /*没引用，没实现*/
+    void GenerateEncryptionKeys(string hexPrime, ulong n, int DecompositionBitCount, int GaloisDecompositionBitCount, int SmallModulusCount = -1)
+    {
+    }
+    ConcurrentQueue<AtomicSealBfvEncryptedEnvironment> environmentQueue;
+    /*没引用，没实现*/
+    IComputationEnvironment AllocateComputationEnv()
+    {
+       
     }
 
-    public void GenerateEncryptionKeys(string hexPrime, ulong n, int DecompositionBitCount, int GaloisDecompositionBitCount, int SmallModulusCount = -1)
+    /*没引用，没实现*/
+    void FreeComputationEnv(IComputationEnvironment env)
     {
-        GenerateEncryptionKeys(Convert.ToUInt64(hexPrime, 16), n, DecompositionBitCount, GaloisDecompositionBitCount, SmallModulusCount);
     }
-    ConcurrentQueue<AtomicSealBfvEncryptedEnvironment> environmentQueue = new ConcurrentQueue<AtomicSealBfvEncryptedEnvironment>();
-    public IComputationEnvironment AllocateComputationEnv()
+    /*没引用，没实现*/
+   void Save(string FileName, bool withPrivateKeys)
     {
-        environmentQueue.TryDequeue(out AtomicSealBfvEncryptedEnvironment env);
-        if (env == null)
-            env = new AtomicSealBfvEncryptedEnvironment(this);
-        return env;
-
     }
-
-
-    public void FreeComputationEnv(IComputationEnvironment env)
+    /*没引用，没实现*/
+    void Save()
     {
-        environmentQueue.Enqueue(env as AtomicSealBfvEncryptedEnvironment);
     }
-
-    public void Save(string FileName, bool withPrivateKeys)
-    {
-        throw new NotImplementedException();
-    }
-
-    public Stream Save(Stream stream, bool withPrivateKeys)
-    {
-        throw new NotImplementedException();
-    }
-
-    public ulong[] Primes{ get { return new ulong[] { plainmodulusValue }; } }
-}
-
-/// <summary>
-/// This class is used to count the number of operations performed of each type.
-/// </summary>
-public static class OperationsCount
-{
-    public static int Destructor, Encryption, Plain, Decryption, Multiplication, PlainMultiplication, Addition, Dispose;
-    public static int PlainAddition, Subtraction, PlainSubtraction, Rotation, AddMany, AddManyItemCount, Relinarization;
-    static Dictionary<string, int> Totals = null;
-
-    static OperationsCount()
-    {
-        AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
-    }
-
-    private static void CurrentDomain_ProcessExit(object sender, EventArgs e)
-    {
-        PrintTotals();
-    }
-    /// <summary>
-    /// report on an operation performed
-    /// </summary>
-    /// <param name="counter">type of operation performed</param>
-    /// <param name="value">number of times the operation was performed</param>
-    [ConditionalAttribute("DEBUG")]
-    public static void Add(ref int counter, int value)
-    {
-        Interlocked.Add(ref counter, value);
-    }
-    /// <summary>
-    /// print the number of times each operation was performed
-    /// </summary>
-    [ConditionalAttribute("DEBUG")]
-    public static void Print()
-    {
-        if (Totals == null) return;
-        Type type = typeof(OperationsCount);
-        FieldInfo[] fields = type.GetFields();
-
-        Console.WriteLine("Operations:");
-        foreach(var f in fields)
-        {
-            Console.WriteLine("\t{0}\t{1}", f.Name, (int)f.GetValue(f.Name));
-        }
-    }
-
-    /// <summary>
-    /// reset operation counters
-    /// </summary>
-    [ConditionalAttribute("DEBUG")]
-    public static void Reset()
-    {
-        Type type = typeof(OperationsCount);
-        FieldInfo[] fields = type.GetFields();
-        if (Totals == null)
-            Totals = new Dictionary<string, int>();
-
-
-        foreach(var f in fields)
-        {
-            if (!Totals.ContainsKey(f.Name))
-                Totals[f.Name] = (int)f.GetValue(f.Name);
-            else
-                Totals[f.Name] += (int)f.GetValue(f.Name);
-            f.SetValue(f.Name, 0);
-        }
-    }
-
-    /// <summary>
-    /// print the number of operations performed since the begining of the execution
-    /// (numbers are not effected by calls to Reset)
-    /// </summary>
-    [ConditionalAttribute("DEBUG")]
-    public static void PrintTotals()
-    {
-        if (Totals == null) return;
-        Type type = typeof(OperationsCount);
-        FieldInfo[] fields = type.GetFields();
-
-        Console.WriteLine("Operations (total):");
-        foreach(var f in fields)
-        {
-            Console.WriteLine("\t{0}\t{1}", f.Name, (int)f.GetValue(f.Name) + Totals[f.Name]);
-        }
-    }
-
-
+    vector<ulong> getPrimes() { return plainmodulusValue; }
+    //public ulong[] Primes{ get { return new ulong[] { plainmodulusValue }; } }
 }
 
 
